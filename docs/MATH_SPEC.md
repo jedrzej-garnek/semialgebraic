@@ -84,3 +84,9 @@ roots are computed in `AA`.  Returned basic-set samples satisfy all source
 equalities and inequalities exactly.  Failure to find samples, especially for
 several nonlinear equalities, is explicitly not an emptiness result.
 
+For visualization, an associative tree of joins may be flattened to direct
+simplex weights. This is exactly the same set operation and does not replace
+any operand by its convex hull. Operand points are sampled and validated
+exactly; large collections of convex combinations may then be formed in
+floating point solely for plotting and must be labelled approximate.
+

@@ -74,6 +74,14 @@ not a Minkowski sum.  `A.cartesian_product(B)` preserves the coordinates of
 - 2D/3D coordinate projections and independent custom projection bases are
   supported.  Approximation labels use supported Sage legend/text primitives,
   so `show()` and `save()` do not receive private renderer keywords.
+- Nested convex joins are sampled directly with independent simplex weights.
+  This preserves exact join semantics without convexifying operands and avoids
+  correlated intermediate fans. Exact operand samples are mixed numerically
+  only for visualization and are reported as approximate.
+- `max_sample_points` is an upper bound. The normal display cloud scales like
+  `4*samples^2` (minimum 1,000), capped by that argument. Sage 3D points are
+  grouped linearly instead of using the slow repeated-addition path in
+  `point3d(list)`.
 
 Sage 10.5's `sage.interfaces.qepcad` module was found during development, but
 the external `qepcad` executable was not installed.  The package detects this
@@ -99,6 +107,13 @@ PYTHONPATH=src python -m unittest discover -s tests -v
 General systems containing several nonlinear equalities are not guaranteed to
 have every connected component sampled.  A warning or empty drawing from the
 visualizer never asserts that the exact semialgebraic set is empty.
+
+The nested-join benchmark and measured before/after results are documented in
+[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md):
+
+```bash
+python benchmarks/benchmark_bicone.py --save-png
+```
 
 See `docs/MATH_SPEC.md`, `docs/ARCHITECTURE.md`, and `docs/TEST_PLAN.md` for
 the precise contract and known limits.

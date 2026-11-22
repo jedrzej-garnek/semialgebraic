@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import warnings
 
-from sage.all import Graphics, QQ, RDF, matrix, point, point3d, text3d, vector
+from sage.all import Graphics, QQ, RDF, matrix, point, text3d, vector
 from sage.plot.plot3d.base import Graphics3dGroup
+from sage.plot.plot3d.shapes2 import Point
 
 from ._numeric import as_python_integer
 from .sampling import infer_ranges, sample_set
@@ -17,6 +18,16 @@ class PlottingWindowWarning(UserWarning):
 
 class SamplingWarning(UserWarning):
     """The visualization sampler reports an incomplete strategy or no points."""
+
+
+def _graphics3d_point_cloud(points, point_size, color, kwds):
+    """Build a Sage 3D point cloud in linear time."""
+    if not points:
+        return Graphics3dGroup([])
+    minima = tuple(min(p[i] for p in points) for i in range(3))
+    objects = [Point(p, point_size, color=color, **kwds) for p in points]
+    objects.append(text3d("approximation", minima, color="black"))
+    return Graphics3dGroup(objects)
 
 
 def _normalise_ranges(dimension: int, ranges, plot_range):
@@ -73,7 +84,7 @@ def _projection(ambient_dimension: int, indices, basis):
 def plot_projection(semiset, indices=None, *, basis=None, ranges=None,
                     plot_range=None, samples=15, max_sample_points=50_000,
                     max_candidates=None, seed=0, default_window=(-2, 2),
-                    point_size=8, color="steelblue", **kwds):
+                    point_size=3, color="steelblue", **kwds):
     """Draw a reproducible numerical sample of an orthogonal projection.
 
     This returns a Sage 2D or 3D graphics object and never calls ``show()``.
@@ -100,8 +111,12 @@ def plot_projection(semiset, indices=None, *, basis=None, ranges=None,
                 "automatic plotting window: " + "; ".join(dict.fromkeys(notes)),
                 PlottingWindowWarning, stacklevel=2)
     dimension, project = _projection(semiset.ambient_dimension, indices, basis)
+    # max_sample_points is a ceiling, not a demand to manufacture 50,000
+    # points for every value of samples.  Quadratic scaling is appropriate for
+    # a projected 2D/3D point cloud and makes samples control visible quality.
+    display_target = min(max_sample_points, max(1_000, 4 * samples * samples))
     sampled = sample_set(semiset, ambient_ranges, samples, max_candidates,
-                         max_sample_points, seed)
+                         display_target, seed)
     for diagnostic in dict.fromkeys(sampled.diagnostics):
         warnings.warn(diagnostic, SamplingWarning, stacklevel=2)
     points = [project(p) for p in sampled.points]
@@ -116,10 +131,8 @@ def plot_projection(semiset, indices=None, *, basis=None, ranges=None,
         # forwarded by Sage to matplotlib and must not be used as metadata.
         return point(points, size=point_size, color=color,
                      legend_label="approximate projection", **kwds)
-    if not points:
-        return Graphics3dGroup([])
-    graphic3d = point3d(points, size=point_size, color=color, **kwds)
-    minima = tuple(min(p[i] for p in points) for i in range(3))
-    graphic3d += text3d("approximation", minima, color="black")
-    return graphic3d
+    # Sage's point3d(list_of_points) repeatedly adds Graphics3d objects and is
+    # quadratic in the number of points.  Constructing one group is linear and
+    # produces the same point-cloud semantics for show()/save().
+    return _graphics3d_point_cloud(points, point_size, color, kwds)
 

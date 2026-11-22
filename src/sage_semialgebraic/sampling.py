@@ -11,12 +11,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from itertools import chain, product
 from math import gcd, isqrt
-from random import Random
 from typing import Iterable, Iterator, Sequence
 
+import numpy as np
 from sage.all import AA, QQ, PolynomialRing, matrix
 
-from .coverage import Interval, _linear_constraint
+from .coverage import Interval, _linear_constraint, singleton_point
 
 
 @dataclass(frozen=True)
@@ -25,6 +25,7 @@ class SamplingResult:
 
     points: tuple[tuple[object, ...], ...]
     diagnostics: tuple[str, ...] = ()
+    exact: bool = True
 
 
 def _primes(count: int) -> tuple[int, ...]:
@@ -68,13 +69,14 @@ def _unique_points(points: Iterable[Sequence[object]], limit: int):
 
 
 def candidate_points(ranges: Sequence[tuple[object, object]], samples: int,
-                     cap: int, seed: int) -> Iterator[tuple[object, ...]]:
+                     cap: int, seed: int, *, low_discrepancy: bool = False) \
+        -> Iterator[tuple[object, ...]]:
     """Yield a full grid or a window-wide deterministic Halton sample."""
     if cap <= 0:
         return
     dimension = len(ranges)
     full_size = samples ** dimension
-    if full_size <= cap:
+    if full_size <= cap and not low_discrepancy:
         axes = [tuple(lo + (hi - lo) * QQ(i) / (samples - 1)
                       for i in range(samples)) for lo, hi in ranges]
         yield from product(*axes)
@@ -82,7 +84,7 @@ def candidate_points(ranges: Sequence[tuple[object, object]], samples: int,
 
     seen: set[tuple[object, ...]] = set()
     emitted = 0
-    centre = tuple((lo + hi) / 2 for lo, hi in ranges)
+    centre = tuple((QQ(lo) + QQ(hi)) / 2 for lo, hi in ranges)
     anchors = [centre]
     if dimension <= 12 and 2 ** dimension <= max(2, cap // 8):
         anchors.extend(tuple(bounds[bit] for bounds, bit in zip(ranges, bits))
@@ -184,7 +186,8 @@ def _evaluate_expressions(expressions, parameters, values):
 
 
 def _hypersurface_points(polynomial, ranges, samples: int, budget: int,
-                         seed: int) -> Iterator[tuple[object, ...]]:
+                         seed: int, diversify: bool = False) \
+        -> Iterator[tuple[object, ...]]:
     """Yield exact points on one polynomial hypersurface within a box."""
     generators = tuple(polynomial.parent().gens())
     active = [i for i, generator in enumerate(generators)
@@ -196,7 +199,8 @@ def _hypersurface_points(polynomial, ranges, samples: int, budget: int,
         other_indices = tuple(i for i in range(len(generators)) if i != solve_index)
         other_ranges = tuple(ranges[i] for i in other_indices)
         fixed_candidates = candidate_points(
-            other_ranges, samples, per_variable, seed + 7919 * (turn + 1)) \
+            other_ranges, samples, per_variable, seed + 7919 * (turn + 1),
+            low_discrepancy=diversify) \
             if other_indices else iter(((),))
         checked = 0
         for fixed in fixed_candidates:
@@ -228,11 +232,12 @@ def _hypersurface_points(polynomial, ranges, samples: int, budget: int,
 
 
 def _sample_basic(semiset, ranges, samples: int, candidate_cap: int,
-                  point_cap: int, seed: int) -> SamplingResult:
+                  point_cap: int, seed: int, diversify: bool) -> SamplingResult:
     equalities = tuple(p for p in semiset._constraints["eq"] if p != 0)
     if not equalities:
         accepted = (candidate for candidate in candidate_points(
-            ranges, samples, candidate_cap, seed) if semiset.contains(candidate))
+            ranges, samples, candidate_cap, seed,
+            low_discrepancy=diversify) if semiset.contains(candidate))
         return SamplingResult(_unique_points(accepted, point_cap))
 
     linear = tuple(p for p in equalities if _total_degree(p) <= 1)
@@ -244,9 +249,38 @@ def _sample_basic(semiset, ranges, samples: int, candidate_cap: int,
     parameters = tuple(parameter_ring.gens())[:len(free_columns)]
     parameter_ranges = tuple(ranges[i] for i in free_columns)
 
+    # Substitute the affine parameterization once.  Re-evaluating all original
+    # ambient polynomials through SemialgebraicSet.contains() for every
+    # candidate repeated the same substitutions tens of thousands of times.
+    parameter_constraints = {
+        relation: tuple(parameter_ring(polynomial(*expressions))
+                        for polynomial in semiset._constraints[relation])
+        for relation in ("eq", "ge", "gt", "le", "lt")
+    }
+
+    def parameters_satisfy(values):
+        for relation, polynomials in parameter_constraints.items():
+            for polynomial in polynomials:
+                value = polynomial(*values) if parameters else polynomial
+                if relation == "eq":
+                    accepted = value == 0
+                elif relation == "ge":
+                    accepted = value >= 0
+                elif relation == "gt":
+                    accepted = value > 0
+                elif relation == "le":
+                    accepted = value <= 0
+                else:
+                    accepted = value < 0
+                if not bool(accepted):
+                    return False
+        return True
+
     def lift(values):
+        if not parameters_satisfy(values):
+            return None
         point_ = _evaluate_expressions(expressions, parameters, values)
-        if _within_ranges(point_, ranges) and semiset.contains(point_):
+        if _within_ranges(point_, ranges):
             return point_
         return None
 
@@ -264,10 +298,11 @@ def _sample_basic(semiset, ranges, samples: int, candidate_cap: int,
         transformed.append(image)
 
     if not transformed:
-        centre = tuple((lo + hi) / 2 for lo, hi in parameter_ranges)
+        centre = tuple((QQ(lo) + QQ(hi)) / 2 for lo, hi in parameter_ranges)
         parameter_candidates = chain(
             (centre,), candidate_points(
-                parameter_ranges, samples, candidate_cap - 1, seed))
+                parameter_ranges, samples, candidate_cap - 1, seed,
+                low_discrepancy=diversify))
         lifted = (lift(values) for values in parameter_candidates)
         return SamplingResult(_unique_points(
             (point_ for point_ in lifted if point_ is not None), point_cap))
@@ -278,7 +313,7 @@ def _sample_basic(semiset, ranges, samples: int, candidate_cap: int,
         for index, driver in enumerate(transformed):
             for values in _hypersurface_points(
                     driver, parameter_ranges, samples, per_equation,
-                    seed + 65537 * (index + 1)):
+                    seed + 65537 * (index + 1), diversify=diversify):
                 point_ = lift(values)
                 if point_ is not None:
                     yield point_
@@ -311,35 +346,70 @@ def _join_leaves(semiset):
         yield semiset
 
 
-def _simplex_weights(count: int, rng: Random):
-    """Return exact rational weights, approximately uniform on the simplex."""
-    if count == 1:
-        return (QQ.one(),)
-    denominator = 1 << 32
-    cuts = (0, *sorted(rng.sample(range(1, denominator), count - 1)),
-            denominator)
-    return tuple(QQ(cuts[i + 1] - cuts[i]) / denominator
-                 for i in range(count))
+def _numeric_unique_rows(rows: Iterable[Sequence[float]], limit: int):
+    """Deduplicate a finite numerical point cloud with vectorized NumPy code."""
+    array = np.asarray(tuple(rows), dtype=np.float64)
+    if not array.size:
+        return ()
+    _, first_indices = np.unique(
+        np.round(array, decimals=14), axis=0, return_index=True)
+    first_indices.sort()
+    selected = array[first_indices[:limit]]
+    return tuple(map(tuple, selected.tolist()))
+
+
+def _random_simplex_weights(rng, rows: int, columns: int):
+    """Generate well-spread floating weights for visualization only.
+
+    Most rows are uniform in the full simplex.  A smaller deterministic share
+    samples simplex faces and near-boundary regions, which keeps apices and
+    cone boundaries visible without turning the drawing into a few fans.
+    """
+    if columns == 1:
+        return np.ones((rows, 1), dtype=np.float64)
+    interior = rows * 4 // 5
+    boundary = rows - interior
+    weights = np.empty((rows, columns), dtype=np.float64)
+    if interior:
+        weights[:interior] = rng.dirichlet(
+            np.ones(columns, dtype=np.float64), size=interior)
+    if boundary:
+        weights[interior:] = rng.dirichlet(
+            np.full(columns, 0.45, dtype=np.float64), size=boundary)
+        if columns > 2:
+            face_rows = boundary // 2
+            face = weights[interior:interior + face_rows]
+            face[np.arange(face_rows), np.arange(face_rows) % columns] = 0.0
+            face /= face.sum(axis=1, keepdims=True)
+    return weights
 
 
 def _sample_join(semiset, ranges, samples: int, candidate_cap: int,
                  point_cap: int, seed: int) -> SamplingResult:
-    """Sample a flattened join without creating artificial intermediate fans.
+    """Sample a flattened join using fast numerical convex combinations.
 
-    Samples from different operands and simplex weights are selected
-    independently, which avoids the correlated-index problem of
-    ``_spread_indices`` on a flattened ``(left, right, t)`` product.
+    Leaves are still sampled and validated exactly.  Only the visualization
+    mixtures are converted once to ``float64``; the returned result therefore
+    carries ``exact=False`` and must never be used by proof APIs.
     """
     leaves = tuple(_join_leaves(semiset))
     leaf_count = len(leaves)
-    leaf_point_cap = min(point_cap, max(samples, 4 * isqrt(point_cap)))
-    leaf_candidate_cap = max(1, candidate_cap // leaf_count)
-
-    results = tuple(
-        sample_set(leaf, ranges, samples, leaf_candidate_cap, leaf_point_cap,
-                   seed + 7919 * (i + 1))
-        for i, leaf in enumerate(leaves)
-    )
+    leaf_point_cap = min(
+        point_cap,
+        max(samples, min(5_000, max(1, point_cap // 5)),
+            8 * isqrt(point_cap)))
+    singleton_points = tuple(singleton_point(leaf) for leaf in leaves)
+    nonsingleton_count = sum(point_ is None for point_ in singleton_points)
+    leaf_candidate_cap = max(1, candidate_cap // max(1, nonsingleton_count))
+    results = []
+    for i, (leaf, singleton) in enumerate(zip(leaves, singleton_points)):
+        if singleton is not None:
+            results.append(SamplingResult((tuple(singleton),)))
+        else:
+            results.append(sample_set(
+                leaf, ranges, samples, leaf_candidate_cap, leaf_point_cap,
+                seed + 7919 * (i + 1), diversify=True))
+    results = tuple(results)
     diagnostics = tuple(note for result in results
                         for note in result.diagnostics)
     if any(not result.points for result in results):
@@ -349,63 +419,79 @@ def _sample_join(semiset, ranges, samples: int, candidate_cap: int,
                 "this is not an emptiness proof",
             ))
 
-    operands = tuple(result.points for result in results)
-    rng = Random(seed)
-    denominator = 1 << 32
+    operands = tuple(np.asarray(
+        [[float(value) for value in point_] for point_ in result.points],
+        dtype=np.float64) for result in results)
+    rng = np.random.default_rng(abs(seed))
     dimension = semiset.ambient_dimension
+    range_array = np.asarray(
+        [[float(lower), float(upper)] for lower, upper in ranges],
+        dtype=np.float64)
 
-    def combinations():
-        # Include a small sample of the individual operands (simplex vertices).
-        # Reserve most of the display budget for mixtures, even when a leaf has
-        # very many sample points.
-        from itertools import islice
+    # Preserve every small operand and a window-wide subset of large operands.
+    # In the benchmark this includes both apices and the entire middle disk.
+    anchor_limit = min(point_cap // 10, sum(len(points) for points in operands))
+    anchors = []
+    if anchor_limit:
+        cursors = [0] * leaf_count
+        while len(anchors) < anchor_limit:
+            progressed = False
+            for operand_index, operand_points in enumerate(operands):
+                cursor = cursors[operand_index]
+                if cursor < len(operand_points):
+                    anchors.append(operand_points[cursor])
+                    cursors[operand_index] += 1
+                    progressed = True
+                    if len(anchors) >= anchor_limit:
+                        break
+            if not progressed:
+                break
 
-        def operand_anchors():
-            for index in range(max(map(len, operands))):
-                for operand_points in operands:
-                    if index < len(operand_points):
-                        yield operand_points[index]
+    target_mixtures = max(0, point_cap - len(anchors))
+    attempt_budget = max(0, candidate_cap)
+    mixtures = []
+    attempted = 0
+    batch_size = 8192
+    while len(mixtures) < target_mixtures and attempted < attempt_budget:
+        rows = min(batch_size, attempt_budget - attempted,
+                   target_mixtures - len(mixtures))
+        attempted += rows
+        weights = _random_simplex_weights(rng, rows, leaf_count)
+        chosen = np.empty((rows, leaf_count, dimension), dtype=np.float64)
+        for operand_index, operand_points in enumerate(operands):
+            indices = rng.integers(0, len(operand_points), size=rows)
+            chosen[:, operand_index, :] = operand_points[indices]
+        batch = np.einsum("bi,bid->bd", weights, chosen, optimize=True)
+        inside = np.logical_and(
+            batch >= range_array[:, 0], batch <= range_array[:, 1]).all(axis=1)
+        mixtures.extend(batch[inside])
 
-        yield from islice(operand_anchors(), max(0, point_cap // 10))
-
-        for attempt in range(max(candidate_cap, point_cap)):
-            chosen = tuple(rng.choice(operand_points)
-                           for operand_points in operands)
-            if attempt % 4 == 0:
-                # Also sample pairwise joins: helpful for displaying the
-                # boundary of cones and related joins with point operands.
-                first, second = rng.sample(range(leaf_count), 2)
-                t = QQ(rng.randrange(1, denominator)) / denominator
-                weights = [QQ.zero()] * leaf_count
-                weights[first] = t
-                weights[second] = 1 - t
-            else:
-                weights = _simplex_weights(leaf_count, rng)
-            candidate = tuple(
-                sum(weights[i] * chosen[i][coord]
-                    for i in range(leaf_count))
-                for coord in range(dimension)
-            )
-            if _within_ranges(candidate, ranges):
-                yield candidate
-
-    return SamplingResult(_unique_points(combinations(), point_cap), diagnostics)
+    points = _numeric_unique_rows(chain(anchors, mixtures), point_cap)
+    numerical_note = (
+        "join visualization uses floating-point convex combinations of "
+        "exactly validated operand samples",
+    )
+    return SamplingResult(points, diagnostics + numerical_note, exact=False)
 
 
 def sample_set(semiset, ranges, samples: int, candidate_cap: int,
-               point_cap: int, seed: int = 0) -> SamplingResult:
+               point_cap: int, seed: int = 0, *, diversify: bool = False) \
+        -> SamplingResult:
     """Sample a set recursively while preserving exact join/product semantics."""
     if semiset._kind == "basic":
-        return _sample_basic(semiset, ranges, samples, candidate_cap, point_cap, seed)
+        return _sample_basic(
+            semiset, ranges, samples, candidate_cap, point_cap, seed, diversify)
 
     if semiset._kind == "product":
         left, right = semiset._operands
         n = left.ambient_dimension
         side_limit = min(point_cap, max(samples, 2 * isqrt(point_cap) + 1))
         left_result = sample_set(left, ranges[:n], samples,
-                                 max(1, candidate_cap // 2), side_limit, seed + 1)
+                                 max(1, candidate_cap // 2), side_limit, seed + 1,
+                                 diversify=diversify)
         right_result = sample_set(right, ranges[n:], samples,
-                                  max(1, candidate_cap // 2), side_limit, seed + 2)
+                                  max(1, candidate_cap // 2), side_limit, seed + 2,
+                                  diversify=diversify)
         left_points, right_points = left_result.points, right_result.points
         total = len(left_points) * len(right_points)
 
@@ -418,7 +504,8 @@ def sample_set(semiset, ranges, samples: int, candidate_cap: int,
 
         return SamplingResult(
             _unique_points(combinations(), point_cap),
-            left_result.diagnostics + right_result.diagnostics)
+            left_result.diagnostics + right_result.diagnostics,
+            exact=left_result.exact and right_result.exact)
 
     if semiset._kind == "join":
         return _sample_join(semiset, ranges, samples, candidate_cap,

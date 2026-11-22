@@ -21,6 +21,13 @@ The executable suite in `tests/` covers:
 - shifted positive-octant plotting with `samples=50` and PNG rendering;
 - exact sphere sampling, multiple linear equalities, automatic windows, nested
   convex joins, 3D PNG rendering, and absence of private renderer keywords.
+- independent bicone-inequality validation for flattened joins, both axial
+  halves, middle-section radii, angular coverage, reproducible seeds, bounded
+  output for five-way joins, and linear-time 3D point-cloud saving.
+
+Performance measurements are separate from unit tests and live in
+`benchmarks/benchmark_bicone.py`; methodology and results are recorded in
+`docs/PERFORMANCE.md`.
 
 Primary command:
 

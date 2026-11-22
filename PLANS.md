@@ -20,6 +20,15 @@
   hypersurfaces through Sage real-algebraic root isolation.
 - [x] Renderer-safe approximation labels, 2D/3D `show()` smoke checks, and PNG
   export without private `Graphics._extra_kwds` metadata.
+- [x] Flatten associative join trees for visualization without convexifying
+  leaves; recognize singleton operands and diversify nonsingleton samples.
+- [x] Vectorize approximate join mixtures and numerical deduplication with
+  NumPy while keeping exact basic samples and proof APIs separate.
+- [x] Replace Sage's quadratic `point3d(list)` path with a linear
+  `Graphics3dGroup` construction and scale display size predictably with
+  `samples` under `max_sample_points`.
+- [x] Add the bicone correctness/performance benchmark, independent geometry
+  checks, measured before/after report, and saved PNG artifact.
 - [x] Executable acceptance/regression tests and user documentation.
 - [x] Inspect installed Sage QEPCAD interface and detect the external executable
   independently.

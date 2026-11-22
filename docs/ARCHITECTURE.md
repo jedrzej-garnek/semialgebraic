@@ -34,7 +34,8 @@ Top-level imports include `SemialgebraicSet`, `CoverageResult`,
   QEPCAD availability detection.
 - `sampling.py`: full-grid/low-discrepancy candidate generation, exact linear
   elimination, exact algebraic hypersurface specialization, recursive
-  join/product sampling, and automatic finite-window inference.
+  join/product sampling, vectorized numerical join mixtures, and automatic
+  finite-window inference.
 - `plotting.py`: orthogonal coordinate/custom-basis projection into Sage 2D/3D
   graphics and safe user-facing sampling diagnostics.
 - `result.py`: immutable three-valued results and diagnostics.
@@ -80,4 +81,13 @@ output through supported legend/text primitives.  It never stores private
 metadata in `Graphics._extra_kwds`.  A custom basis contains two or three
 independent ambient vectors; Gram-Schmidt produces orthonormal coordinates for
 the same span.
+
+Nested joins are flattened because the binary join is associative, but no leaf
+is replaced by its convex hull. Operand samples are exact; their visualization
+mixtures are explicitly marked approximate and use NumPy `float64`. The
+renderer receives one `Graphics3dGroup`, avoiding Sage 10.5's quadratic
+`point3d(list)` addition path. `max_sample_points` is a ceiling; the normal
+target grows as `4*samples^2` between a floor of 1,000 and that ceiling.
+
+See `docs/PERFORMANCE.md` for the executable benchmark and measured costs.
 
