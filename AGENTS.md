@@ -45,7 +45,9 @@ See `docs/ARCHITECTURE.md` for detailed signatures and feasible backend choices.
 - Prefer pure Python `.py` modules importing `sage.all` over `.sage` preparser-dependent source.
 - Be careful with distinct polynomial rings, ambient dimensions, variable renaming and quantifier capture.
 - Use exact rational arithmetic for certified box algorithms; do not convert `QQ` to `float` before proof steps.
-- Require explicit finite drawing windows when needed; do not assume unbounded sets fit a picture.
+- Use explicit finite drawing windows when provided; otherwise infer coordinate
+  bounds and fall back to a documented finite default window with a warning.
+  Never treat the visualization window as a proof of boundedness.
 - Keep plotting usable headlessly in WSL; do not call GUI `show()` in unit tests.
 - Validate `delta > 0`, `epsilon >= 0`, point dimension, independent basis vectors, and equal dimensions for `+`.
 - Add fast paths for basic-set membership, products, singleton joins, zero-interior equalities, and exact rational axis-aligned boxes.

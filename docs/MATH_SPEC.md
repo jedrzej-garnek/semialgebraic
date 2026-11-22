@@ -69,3 +69,18 @@ rational point is returned for box-backend counterexamples.  Unsupported
 general formulas return `UNKNOWN` unless a certified decision backend exists;
 plots and numerical sampling are never proofs.
 
+## Visualization sampling
+
+Visualization uses a finite ambient window.  The window may be explicit,
+inferred from independent linear coordinate bounds, or completed with a
+documented default such as `[-2,2]`; none of these choices proves boundedness.
+When a regular grid exceeds the candidate budget, a reproducible
+low-discrepancy sample spans the entire window instead of taking a Cartesian
+product prefix.
+
+For algebraic sets, linear equalities are eliminated exactly over `QQ` and a
+remaining hypersurface is specialized to univariate polynomials whose real
+roots are computed in `AA`.  Returned basic-set samples satisfy all source
+equalities and inequalities exactly.  Failure to find samples, especially for
+several nonlinear equalities, is explicitly not an emptiness result.
+

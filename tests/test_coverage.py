@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from sage.all import QQ, PolynomialRing
+from sage.all import QQ, ZZ, PolynomialRing
 
 from sage_semialgebraic import CoverageStatus, SemialgebraicSet
 
@@ -99,6 +99,13 @@ class CoverageTests(unittest.TestCase):
         result = unit_square().check_cube_hitting(
             [(QQ(1) / 2, QQ(1) / 2)], QQ(1) / 2, max_cells=1)
         self.assertIs(result.status, CoverageStatus.UNKNOWN)
+
+    def test_sage_integer_resource_cap_and_noninteger_rejection(self):
+        result = unit_square().check_cube_hitting(
+            [(QQ(1) / 2, QQ(1) / 2)], QQ(1) / 2, max_cells=ZZ(100))
+        self.assertIs(result.status, CoverageStatus.PROVED)
+        with self.assertRaises(ValueError):
+            unit_square().check_cube_hitting([], 1, max_cells=QQ(3) / 2)
 
     def test_general_formula_without_qe_is_unknown(self):
         ring = PolynomialRing(QQ, 2, names=("x", "y"))

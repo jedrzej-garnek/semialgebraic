@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
-from itertools import islice, product
-from typing import Sequence
+import warnings
 
 from sage.all import Graphics, QQ, RDF, matrix, point, point3d, text3d, vector
 from sage.plot.plot3d.base import Graphics3dGroup
+
+from ._numeric import as_python_integer
+from .sampling import infer_ranges, sample_set
+
+
+class PlottingWindowWarning(UserWarning):
+    """A finite visualization window was inferred or substituted."""
+
+
+class SamplingWarning(UserWarning):
+    """The visualization sampler reports an incomplete strategy or no points."""
 
 
 def _normalise_ranges(dimension: int, ranges, plot_range):
@@ -14,8 +24,8 @@ def _normalise_ranges(dimension: int, ranges, plot_range):
         raise ValueError("give only one of ranges and plot_range")
     value = ranges if ranges is not None else plot_range
     if value is None:
-        raise ValueError("explicit finite ambient ranges are required")
-    if (len(value) == 2 and not hasattr(value[0], "__len__")):
+        return None
+    if len(value) == 2 and not hasattr(value[0], "__len__"):
         value = [value] * dimension
     if len(value) != dimension:
         raise ValueError(f"expected {dimension} ambient plotting ranges")
@@ -27,44 +37,6 @@ def _normalise_ranges(dimension: int, ranges, plot_range):
     return tuple(result)
 
 
-def _grid(ranges, samples: int, cap: int):
-    axes = [tuple(lo + (hi - lo) * QQ(i) / (samples - 1)
-                  for i in range(samples)) for lo, hi in ranges]
-    return islice(product(*axes), cap)
-
-
-def _sample_set(semiset, ranges, samples: int, cap: int):
-    if semiset._kind == "basic":
-        output = []
-        for candidate in _grid(ranges, samples, cap):
-            if semiset.contains(candidate):
-                output.append(tuple(candidate))
-        return output
-    if semiset._kind == "product":
-        left, right = semiset._operands
-        n = left.ambient_dimension
-        per_side = max(2, int(cap ** 0.5))
-        left_points = _sample_set(left, ranges[:n], samples, per_side)
-        right_points = _sample_set(right, ranges[n:], samples, per_side)
-        return [a + b for a, b in islice(product(left_points, right_points), cap)]
-    if semiset._kind == "join":
-        left, right = semiset._operands
-        per_side = max(2, int((cap / max(samples, 2)) ** 0.5))
-        left_points = _sample_set(left, ranges, samples, per_side)
-        right_points = _sample_set(right, ranges, samples, per_side)
-        output = []
-        for a, b in product(left_points, right_points):
-            for i in range(samples):
-                t = QQ(i) / (samples - 1)
-                candidate = tuple(t * x + (1 - t) * y for x, y in zip(a, b))
-                if all(lo <= x <= hi for x, (lo, hi) in zip(candidate, ranges)):
-                    output.append(candidate)
-                    if len(output) >= cap:
-                        return output
-        return output
-    return []
-
-
 def _projection(ambient_dimension: int, indices, basis):
     if (indices is None) == (basis is None):
         if indices is None:
@@ -72,11 +44,12 @@ def _projection(ambient_dimension: int, indices, basis):
         else:
             raise ValueError("give exactly one of indices and basis")
     if basis is None:
-        indices = tuple(int(i) for i in indices)
+        indices = tuple(as_python_integer(i, "projection index", minimum=0)
+                        for i in indices)
         if len(indices) not in (2, 3):
             raise ValueError("projection dimension must be 2 or 3")
         if len(set(indices)) != len(indices) or any(
-                i < 0 or i >= ambient_dimension for i in indices):
+                i >= ambient_dimension for i in indices):
             raise ValueError("projection indices must be distinct ambient coordinates")
         return len(indices), lambda p: tuple(RDF(p[i]) for i in indices)
     supplied = tuple(tuple(v) for v in basis)
@@ -99,36 +72,54 @@ def _projection(ambient_dimension: int, indices, basis):
 
 def plot_projection(semiset, indices=None, *, basis=None, ranges=None,
                     plot_range=None, samples=15, max_sample_points=50_000,
+                    max_candidates=None, seed=0, default_window=(-2, 2),
                     point_size=8, color="steelblue", **kwds):
-    """Draw a numerical sample of an orthogonal projection in 2D or 3D.
+    """Draw a reproducible numerical sample of an orthogonal projection.
 
-    The returned object is a Sage ``Graphics``/``Graphics3d`` object.  It is a
-    visualization only, never evidence for an exact containment or coverage
-    statement.  Finite ambient ranges are mandatory.
+    This returns a Sage 2D or 3D graphics object and never calls ``show()``.
+    The drawing is an approximation, not an emptiness, membership, or coverage
+    proof.  Without explicit ranges, coordinate bounds are inferred when
+    possible and otherwise ``default_window`` is used; warnings describe
+    clipped or defaulted directions.
+
+    ``max_candidates`` bounds sampling work and ``max_sample_points`` bounds
+    displayed points.  Python integers and Sage ``Integer`` values are valid.
     """
-    if not isinstance(samples, int) or samples < 2:
-        raise ValueError("samples must be an integer at least 2")
-    if not isinstance(max_sample_points, int) or max_sample_points <= 0:
-        raise ValueError("max_sample_points must be positive")
-    ambient_ranges = _normalise_ranges(semiset.ambient_dimension, ranges,
-                                      plot_range)
+    samples = as_python_integer(samples, "samples", minimum=2)
+    max_sample_points = as_python_integer(
+        max_sample_points, "max_sample_points", minimum=1)
+    if max_candidates is None:
+        max_candidates = max_sample_points
+    max_candidates = as_python_integer(max_candidates, "max_candidates", minimum=1)
+    seed = as_python_integer(seed, "seed")
+    ambient_ranges = _normalise_ranges(semiset.ambient_dimension, ranges, plot_range)
+    if ambient_ranges is None:
+        ambient_ranges, notes = infer_ranges(semiset, default_window)
+        if notes:
+            warnings.warn(
+                "automatic plotting window: " + "; ".join(dict.fromkeys(notes)),
+                PlottingWindowWarning, stacklevel=2)
     dimension, project = _projection(semiset.ambient_dimension, indices, basis)
-    points = [project(p) for p in _sample_set(
-        semiset, ambient_ranges, samples, max_sample_points)]
+    sampled = sample_set(semiset, ambient_ranges, samples, max_candidates,
+                         max_sample_points, seed)
+    for diagnostic in dict.fromkeys(sampled.diagnostics):
+        warnings.warn(diagnostic, SamplingWarning, stacklevel=2)
+    points = [project(p) for p in sampled.points]
+    if not points:
+        warnings.warn(
+            "the visualization sampler found no points in the plotting window; "
+            "this is not an emptiness proof", SamplingWarning, stacklevel=2)
     if dimension == 2:
         if not points:
-            graphic = Graphics()
-        else:
-            graphic = point(points, size=point_size, color=color,
-                            legend_label="approximate projection", **kwds)
-        graphic._extra_kwds["sage_semialgebraic_note"] = (
-            "approximate sampled projection; not a proof")
-        return graphic
+            return Graphics()
+        # legend_label is renderer-supported.  Unknown keys in _extra_kwds are
+        # forwarded by Sage to matplotlib and must not be used as metadata.
+        return point(points, size=point_size, color=color,
+                     legend_label="approximate projection", **kwds)
     if not points:
-        graphic3d = Graphics3dGroup([])
-    else:
-        graphic3d = point3d(points, size=point_size, color=color, **kwds)
-        minima = tuple(min(p[i] for p in points) for i in range(3))
-        graphic3d += text3d("approximation", minima, color="black")
+        return Graphics3dGroup([])
+    graphic3d = point3d(points, size=point_size, color=color, **kwds)
+    minima = tuple(min(p[i] for p in points) for i in range(3))
+    graphic3d += text3d("approximation", minima, color="black")
     return graphic3d
 

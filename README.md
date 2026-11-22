@@ -34,6 +34,10 @@ assert result.status is CoverageStatus.PROVED
 graphic = square.plot_projection(
     indices=(0, 1), ranges=((0, 1), (0, 1)), samples=20
 )
+
+# Ranges are optional.  Unknown/unbounded directions use a warned finite
+# visualization window; this is never a boundedness or emptiness proof.
+automatic_graphic = square.plot_projection()
 ```
 
 For sets `A` and `B` in the same `R^n`, `A + B` is the convex join
@@ -57,9 +61,19 @@ not a Minkowski sum.  `A.cartesian_product(B)` preserves the coordinates of
   **not** make delta-density vacuous.
 - Unsupported first-order decisions return `CoverageStatus.UNKNOWN`; no grid,
   random sample, or floating-point optimizer is promoted to a proof.
-- Projection plots are explicitly approximate sampled drawings.  Finite
-  ambient `ranges` are required, and 2D/3D coordinate or independent custom
-  bases are accepted.
+- Projection plots are explicitly approximate sampled drawings.  Explicit
+  finite `ranges` are honored; otherwise simple coordinate bounds are inferred
+  and a warned `default_window=(-2, 2)` fills unknown or unbounded directions.
+  This window is not a proof of boundedness.
+- `samples`, `max_sample_points`, `max_candidates`, and `seed` accept Python
+  integers and Sage `Integer` values.  A full grid is used when affordable;
+  otherwise a reproducible low-discrepancy sample covers the entire window.
+- Source equalities remain exact.  Plot sampling eliminates linear equalities
+  over `QQ` and isolates real roots of specialized hypersurfaces in Sage's
+  algebraic real field `AA`, then rechecks all constraints exactly.
+- 2D/3D coordinate projections and independent custom projection bases are
+  supported.  Approximation labels use supported Sage legend/text primitives,
+  so `show()` and `save()` do not receive private renderer keywords.
 
 Sage 10.5's `sage.interfaces.qepcad` module was found during development, but
 the external `qepcad` executable was not installed.  The package detects this
@@ -81,6 +95,10 @@ If pytest is not installed in the Sage environment:
 ```bash
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
+
+General systems containing several nonlinear equalities are not guaranteed to
+have every connected component sampled.  A warning or empty drawing from the
+visualizer never asserts that the exact semialgebraic set is empty.
 
 See `docs/MATH_SPEC.md`, `docs/ARCHITECTURE.md`, and `docs/TEST_PLAN.md` for
 the precise contract and known limits.

@@ -274,9 +274,19 @@ class SemialgebraicSet:
                                  method=method, max_cells=max_cells)
 
     def plot_projection(self, indices=None, *, basis=None, ranges=None,
-                        plot_range=None, samples: int = 15, **kwds):
-        """Return an explicitly approximate Sage 2D/3D projection graphic."""
+                        plot_range=None, samples=15, max_sample_points=50_000,
+                        max_candidates=None, seed=0, default_window=(-2, 2),
+                        **kwds):
+        """Return an approximate Sage 2D/3D projection graphic.
+
+        If no finite window is supplied, simple coordinate bounds are inferred
+        and remaining directions use a configurable default visualization
+        window.  Sampling and plotting never certify that the set is empty.
+        """
         from .plotting import plot_projection
         return plot_projection(self, indices=indices, basis=basis, ranges=ranges,
-                               plot_range=plot_range, samples=samples, **kwds)
+                               plot_range=plot_range, samples=samples,
+                               max_sample_points=max_sample_points,
+                               max_candidates=max_candidates, seed=seed,
+                               default_window=default_window, **kwds)
 

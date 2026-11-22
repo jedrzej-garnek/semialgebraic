@@ -14,8 +14,10 @@ set_.check_cube_hitting(points, delta, epsilon=0,
                         method='auto', max_cells=200_000)
 set_.check_delta_dense(points, delta, epsilon=0, norm='linf',
                        method='auto', max_cells=200_000)
-set_.plot_projection(indices=(...), ranges=(...), ...)
-set_.plot_projection(basis=(...), ranges=(...), ...)
+set_.plot_projection(indices=(...), ranges=None, samples=15,
+                     max_sample_points=50_000, max_candidates=None,
+                     seed=0, default_window=(-2, 2), ...)
+set_.plot_projection(basis=(...), ...)
 ```
 
 Top-level imports include `SemialgebraicSet`, `CoverageResult`,
@@ -30,8 +32,11 @@ Top-level imports include `SemialgebraicSet`, `CoverageResult`,
 - `coverage.py`: rational interval recognition, accepted-point filtering,
   empty-interior certificates, endpoint-cell decomposition, witnesses, and
   QEPCAD availability detection.
-- `plotting.py`: bounded numerical sampling and orthogonal coordinate/custom
-  basis projection into Sage 2D/3D graphics.
+- `sampling.py`: full-grid/low-discrepancy candidate generation, exact linear
+  elimination, exact algebraic hypersurface specialization, recursive
+  join/product sampling, and automatic finite-window inference.
+- `plotting.py`: orthogonal coordinate/custom-basis projection into Sage 2D/3D
+  graphics and safe user-facing sampling diagnostics.
 - `result.py`: immutable three-valued results and diagnostics.
 
 Every symbolic result uses Sage polynomials over `QQ`.  A result ring contains
@@ -57,9 +62,22 @@ translation is a future backend and is not advertised as implemented.
 
 ## Plotting contract
 
-Plotting is intentionally separate from certification.  It requires a finite
-range for every ambient coordinate, returns Sage graphics without calling
-`show()`, and labels output as an approximate sampled projection.  A custom
-basis contains two or three independent ambient vectors; Gram-Schmidt produces
-an orthonormal coordinate system for the span.
+Plotting is intentionally separate from certification.  Explicit finite ranges
+are honored; otherwise simple coordinate bounds are inferred and unbounded or
+unknown directions use a configurable finite default window with a warning.
+This never proves boundedness or emptiness.  Oversized grids use a reproducible
+Halton sample over the whole window rather than a lexicographic prefix.
+
+Linear equalities are eliminated over `QQ`.  A remaining polynomial
+hypersurface is sampled by specializing all but one variable and isolating
+exact real roots in Sage's `AA`; every returned basic-set point is then checked
+with exact `contains(..., epsilon=0)`.  General systems of several nonlinear
+equalities are sampled component-wise where possible and emit diagnostics;
+component coverage is not guaranteed.
+
+The method returns Sage graphics without calling `show()` itself and labels
+output through supported legend/text primitives.  It never stores private
+metadata in `Graphics._extra_kwds`.  A custom basis contains two or three
+independent ambient vectors; Gram-Schmidt produces orthonormal coordinates for
+the same span.
 

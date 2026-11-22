@@ -11,6 +11,15 @@
 - [x] Empty-interior cube-hitting certificates for nonzero equalities.
 - [x] Separate infinity-norm delta-density semantics and elementary backend.
 - [x] Approximate bounded 2D/3D coordinate and custom-basis Sage plotting.
+- [x] Sage/Python integer validation without truncating rational inputs.
+- [x] Reproducible whole-window low-discrepancy sampling when a full grid is
+  over budget, with separate candidate and displayed-point limits.
+- [x] Automatic finite plotting windows with coordinate-bound inference and
+  explicit warnings for clipped/default directions.
+- [x] Exact visualization sampling for linear equality systems and polynomial
+  hypersurfaces through Sage real-algebraic root isolation.
+- [x] Renderer-safe approximation labels, 2D/3D `show()` smoke checks, and PNG
+  export without private `Graphics._extra_kwds` metadata.
 - [x] Executable acceptance/regression tests and user documentation.
 - [x] Inspect installed Sage QEPCAD interface and detect the external executable
   independently.

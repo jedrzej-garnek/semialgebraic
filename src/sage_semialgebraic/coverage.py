@@ -14,6 +14,7 @@ from typing import Iterable, Sequence
 
 from sage.all import QQ
 
+from ._numeric import as_python_integer
 from .result import CoverageResult, CoverageStatus
 
 
@@ -322,6 +323,7 @@ def _unsupported(method: str, subject: str) -> CoverageResult:
 def check_cube_hitting(semiset, points, delta, epsilon=0, *, method="auto",
                        max_cells=200_000) -> CoverageResult:
     delta = _positive_rational(delta, "delta")
+    max_cells = as_python_integer(max_cells, "max_cells", minimum=1)
     _validate_epsilon(epsilon)
     if method not in ("auto", "box", "qepcad"):
         raise ValueError("method must be 'auto', 'box', or 'qepcad'")
@@ -354,6 +356,7 @@ def check_cube_hitting(semiset, points, delta, epsilon=0, *, method="auto",
 def check_delta_dense(semiset, points, delta, epsilon=0, *, norm="linf",
                       method="auto", max_cells=200_000) -> CoverageResult:
     delta = _positive_rational(delta, "delta")
+    max_cells = as_python_integer(max_cells, "max_cells", minimum=1)
     _validate_epsilon(epsilon)
     if norm != "linf":
         raise NotImplementedError("only the certified infinity-norm backend is implemented")

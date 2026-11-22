@@ -1,0 +1,15 @@
+README.md
+pyproject.toml
+src/sage_semialgebraic/__init__.py
+src/sage_semialgebraic/coverage.py
+src/sage_semialgebraic/formula.py
+src/sage_semialgebraic/plotting.py
+src/sage_semialgebraic/result.py
+src/sage_semialgebraic/set.py
+src/sage_semialgebraic.egg-info/PKG-INFO
+src/sage_semialgebraic.egg-info/SOURCES.txt
+src/sage_semialgebraic.egg-info/dependency_links.txt
+src/sage_semialgebraic.egg-info/top_level.txt
+tests/test_core.py
+tests/test_coverage.py
+tests/test_plotting.py

@@ -16,6 +16,11 @@ The executable suite in `tests/` covers:
 - `UNKNOWN` for unsupported nonlinear coverage without a certified backend;
 - coordinate/custom-basis projections and headless Sage 2D/3D graphics,
   including illustrative join/product plots.
+- Sage `Integer` plotting/resource limits and rejection of nonintegral values;
+- oversized-grid coverage of the whole window, reproducibility, and uniqueness;
+- shifted positive-octant plotting with `samples=50` and PNG rendering;
+- exact sphere sampling, multiple linear equalities, automatic windows, nested
+  convex joins, 3D PNG rendering, and absence of private renderer keywords.
 
 Primary command:
 
