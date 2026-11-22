@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from itertools import chain, product
 from math import gcd, isqrt
+from random import Random
 from typing import Iterable, Iterator, Sequence
 
 from sage.all import AA, QQ, PolynomialRing, matrix
@@ -296,6 +297,101 @@ def _sample_basic(semiset, ranges, samples: int, candidate_cap: int,
     return SamplingResult(points, diagnostics)
 
 
+def _join_leaves(semiset):
+    """Flatten nested joins, retaining their exact set-theoretic meaning.
+
+    A join of k sets is the set of convex combinations containing one point
+    from each of the k sets. This does NOT convexify any individual operand.
+    """
+    if semiset._kind == "join":
+        left, right = semiset._operands
+        yield from _join_leaves(left)
+        yield from _join_leaves(right)
+    else:
+        yield semiset
+
+
+def _simplex_weights(count: int, rng: Random):
+    """Return exact rational weights, approximately uniform on the simplex."""
+    if count == 1:
+        return (QQ.one(),)
+    denominator = 1 << 32
+    cuts = (0, *sorted(rng.sample(range(1, denominator), count - 1)),
+            denominator)
+    return tuple(QQ(cuts[i + 1] - cuts[i]) / denominator
+                 for i in range(count))
+
+
+def _sample_join(semiset, ranges, samples: int, candidate_cap: int,
+                 point_cap: int, seed: int) -> SamplingResult:
+    """Sample a flattened join without creating artificial intermediate fans.
+
+    Samples from different operands and simplex weights are selected
+    independently, which avoids the correlated-index problem of
+    ``_spread_indices`` on a flattened ``(left, right, t)`` product.
+    """
+    leaves = tuple(_join_leaves(semiset))
+    leaf_count = len(leaves)
+    leaf_point_cap = min(point_cap, max(samples, 4 * isqrt(point_cap)))
+    leaf_candidate_cap = max(1, candidate_cap // leaf_count)
+
+    results = tuple(
+        sample_set(leaf, ranges, samples, leaf_candidate_cap, leaf_point_cap,
+                   seed + 7919 * (i + 1))
+        for i, leaf in enumerate(leaves)
+    )
+    diagnostics = tuple(note for result in results
+                        for note in result.diagnostics)
+    if any(not result.points for result in results):
+        return SamplingResult(
+            (), diagnostics + (
+                "a join operand had no sampled points; "
+                "this is not an emptiness proof",
+            ))
+
+    operands = tuple(result.points for result in results)
+    rng = Random(seed)
+    denominator = 1 << 32
+    dimension = semiset.ambient_dimension
+
+    def combinations():
+        # Include a small sample of the individual operands (simplex vertices).
+        # Reserve most of the display budget for mixtures, even when a leaf has
+        # very many sample points.
+        from itertools import islice
+
+        def operand_anchors():
+            for index in range(max(map(len, operands))):
+                for operand_points in operands:
+                    if index < len(operand_points):
+                        yield operand_points[index]
+
+        yield from islice(operand_anchors(), max(0, point_cap // 10))
+
+        for attempt in range(max(candidate_cap, point_cap)):
+            chosen = tuple(rng.choice(operand_points)
+                           for operand_points in operands)
+            if attempt % 4 == 0:
+                # Also sample pairwise joins: helpful for displaying the
+                # boundary of cones and related joins with point operands.
+                first, second = rng.sample(range(leaf_count), 2)
+                t = QQ(rng.randrange(1, denominator)) / denominator
+                weights = [QQ.zero()] * leaf_count
+                weights[first] = t
+                weights[second] = 1 - t
+            else:
+                weights = _simplex_weights(leaf_count, rng)
+            candidate = tuple(
+                sum(weights[i] * chosen[i][coord]
+                    for i in range(leaf_count))
+                for coord in range(dimension)
+            )
+            if _within_ranges(candidate, ranges):
+                yield candidate
+
+    return SamplingResult(_unique_points(combinations(), point_cap), diagnostics)
+
+
 def sample_set(semiset, ranges, samples: int, candidate_cap: int,
                point_cap: int, seed: int = 0) -> SamplingResult:
     """Sample a set recursively while preserving exact join/product semantics."""
@@ -325,33 +421,8 @@ def sample_set(semiset, ranges, samples: int, candidate_cap: int,
             left_result.diagnostics + right_result.diagnostics)
 
     if semiset._kind == "join":
-        left, right = semiset._operands
-        t_count = max(2, samples)
-        side_limit = min(point_cap, max(samples, 2 * isqrt(
-            max(1, point_cap // t_count)) + 1))
-        left_result = sample_set(left, ranges, samples,
-                                 max(1, candidate_cap // 2), side_limit, seed + 11)
-        right_result = sample_set(right, ranges, samples,
-                                  max(1, candidate_cap // 2), side_limit, seed + 12)
-        left_points, right_points = left_result.points, right_result.points
-        t_values = tuple(QQ(i) / (t_count - 1) for i in range(t_count))
-        total = len(left_points) * len(right_points) * t_count
-
-        def combinations():
-            if not right_points:
-                return
-            for flat in _spread_indices(total, min(total, 2 * point_cap), seed + 13):
-                pair_index, t_index = divmod(flat, t_count)
-                left_index, right_index = divmod(pair_index, len(right_points))
-                a, b, t = (left_points[left_index], right_points[right_index],
-                           t_values[t_index])
-                candidate = tuple(t * x + (1 - t) * y for x, y in zip(a, b))
-                if _within_ranges(candidate, ranges):
-                    yield candidate
-
-        return SamplingResult(
-            _unique_points(combinations(), point_cap),
-            left_result.diagnostics + right_result.diagnostics)
+        return _sample_join(semiset, ranges, samples, candidate_cap,
+                            point_cap, seed)
 
     return SamplingResult((), ("unsupported symbolic set node for plotting",))
 
@@ -425,4 +496,3 @@ def infer_ranges(semiset, default_window=(-2, 2)):
             ranges.append((default_lower, default_upper))
             notes.append(f"coordinate {coordinate} uses the default visualization window")
     return tuple(ranges), tuple(notes)
-
